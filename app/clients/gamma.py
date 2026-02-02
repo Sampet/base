@@ -14,4 +14,8 @@ class GammaClient:
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
         payload = response.json()
-        return payload.get("markets", payload)
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            return payload.get("markets", [])
+        return []
