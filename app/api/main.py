@@ -10,6 +10,7 @@ from starlette.routing import Route
 
 from app.analytics.aggregator import AnalyticsAggregator
 from app.clients.clob import ClobClient
+from app.clients.gamma import GammaClient
 from app.config import settings
 from app.db import RepositoryBundle
 from app.ingestion.collector import EventCollector
@@ -21,6 +22,7 @@ repositories = RepositoryBundle()
 collector = EventCollector(repositories)
 aggregator = AnalyticsAggregator(repositories)
 clob_client = ClobClient()
+gamma_client = GammaClient()
 
 
 async def ingest_events(request: Request) -> JSONResponse:
@@ -86,6 +88,81 @@ async def list_tags(request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
+async def list_events_by_tag(request: Request) -> JSONResponse:
+    tag_id = request.query_params.get("tag_id")
+    if not tag_id:
+        raise HTTPException(status_code=400, detail="tag_id is required")
+    events = gamma_client.fetch_events(params={"tag_id": tag_id})
+    payload = [
+        {
+            "id": event.get("id"),
+            "title": event.get("title") or event.get("question"),
+        }
+        for event in events
+    ]
+    return JSONResponse(payload)
+
+
+async def get_event_history(request: Request) -> JSONResponse:
+    tag_id = request.query_params.get("tag_id")
+    event_id = request.query_params.get("event_id")
+    days_param = request.query_params.get("days")
+    if not tag_id or not event_id or not days_param:
+        raise HTTPException(status_code=400, detail="tag_id, event_id, and days are required")
+    days = int(days_param) if days_param.isdigit() else None
+    if not days:
+        raise HTTPException(status_code=400, detail="days must be numeric")
+    cutoff = collector._cutoff_datetime(days)
+    events = gamma_client.fetch_events(params={"tag_id": tag_id})
+    result = []
+    for event in events:
+        if str(event.get("id")) != str(event_id):
+            continue
+        start_time = collector._parse_datetime(event.get("startDate") or event.get("start_date"))
+        end_time = collector._parse_datetime(event.get("endDate") or event.get("end_date"))
+        if cutoff and not collector._is_recent(
+            Event(
+                event_id=str(event.get("id")),
+                market_id=str(event.get("id")),
+                token_id="",
+                title=str(event.get("title") or ""),
+                category="",
+                start_time=start_time,
+                end_time=end_time,
+                resolution=None,
+                status="active",
+            ),
+            cutoff,
+        ):
+            continue
+        outcome_prices = event.get("outcomePrices") or event.get("outcome_prices") or []
+        prices = []
+        for price in outcome_prices:
+            try:
+                prices.append(float(price))
+            except (TypeError, ValueError):
+                continue
+        status = "closed" if event.get("closed") else "active"
+        if event.get("resolved"):
+            status = "resolved"
+        volume = event.get("volume") or event.get("volumeNum") or event.get("volume_num")
+        result.append(
+            {
+                "event_id": event.get("id"),
+                "title": event.get("title") or event.get("question"),
+                "start_time": start_time.isoformat() if start_time else None,
+                "end_time": end_time.isoformat() if end_time else None,
+                "status": status,
+                "max_probability": max(prices) if prices else None,
+                "min_probability": min(prices) if prices else None,
+                "total_volume": volume,
+            }
+        )
+    if not result:
+        raise HTTPException(status_code=404, detail="No events found for selection")
+    return JSONResponse(result)
+
+
 async def get_event(request: Request) -> JSONResponse:
     event_id = request.path_params["event_id"]
     event = repositories.events.get(event_id)
@@ -144,12 +221,12 @@ def _render_homepage() -> str:
       <h2>1) Select tag, event & period</h2>
       <div class="grid">
         <div>
-          <label class="muted" for="event-select">Crypto event</label>
-          <select id="event-select" style="width:100%; padding:0.4rem; border-radius:6px; border:1px solid #d0d7de;"></select>
-        </div>
-        <div>
           <label class="muted" for="tag-select">Tag</label>
           <select id="tag-select" style="width:100%; padding:0.4rem; border-radius:6px; border:1px solid #d0d7de;"></select>
+        </div>
+        <div>
+          <label class="muted" for="event-select">Event</label>
+          <select id="event-select" style="width:100%; padding:0.4rem; border-radius:6px; border:1px solid #d0d7de;"></select>
         </div>
         <div>
           <label class="muted" for="period-select">Period</label>
@@ -164,141 +241,67 @@ def _render_homepage() -> str:
       <p class="note">Choose a crypto event and period, then fetch data.</p>
       <div class="grid">
         <button id="load-tags">Load tags</button>
-        <button id="load-events">Load crypto events</button>
-        <button id="ingest-events" class="secondary">Fetch data</button>
+        <button id="load-events">Load events</button>
+        <button id="fetch-history" class="secondary">Fetch history</button>
       </div>
       <span id="ingest-status" class="note"></span>
     </div>
 
     <div class="card">
-      <h2>2) Events</h2>
-      <div class="grid">
-        <div>
-          <button id="refresh-events" class="secondary">Refresh list</button>
-          <p class="note">Total: <span id="event-count">0</span></p>
-        </div>
-        <div>
-          <p class="muted">Selected event</p>
-          <div id="selected-event" class="status">None</div>
-          <p class="note" id="selected-meta"></p>
-        </div>
-      </div>
+      <h2>2) Event history</h2>
       <div id="event-error" class="error"></div>
       <table id="events-table">
         <thead>
           <tr>
             <th>Title</th>
             <th>Status</th>
-            <th>Event ID</th>
-            <th>Token</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Min prob</th>
+            <th>Max prob</th>
+            <th>Volume</th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
 
-    <div class="card">
-      <h2>3) Price + analytics</h2>
-      <div class="grid">
-        <div>
-          <button id="ingest-price">Ingest latest price</button>
-          <p class="note" id="price-status"></p>
-        </div>
-        <div>
-          <button id="refresh-analytics" class="secondary">Refresh analytics</button>
-          <p class="note" id="analytics-status"></p>
-        </div>
-      </div>
-      <div id="analytics-card" class="note">No analytics loaded.</div>
-    </div>
-
     <script>
       const state = { events: [], selected: null };
 
       const elements = {
-        ingestBtn: document.getElementById("ingest-events"),
+        fetchBtn: document.getElementById("fetch-history"),
         loadBtn: document.getElementById("load-events"),
         loadTagsBtn: document.getElementById("load-tags"),
         eventSelect: document.getElementById("event-select"),
         tagSelect: document.getElementById("tag-select"),
         periodSelect: document.getElementById("period-select"),
         ingestStatus: document.getElementById("ingest-status"),
-        refreshBtn: document.getElementById("refresh-events"),
-        eventCount: document.getElementById("event-count"),
         eventsTable: document.querySelector("#events-table tbody"),
-        selectedEvent: document.getElementById("selected-event"),
-        selectedMeta: document.getElementById("selected-meta"),
         eventError: document.getElementById("event-error"),
-        ingestPriceBtn: document.getElementById("ingest-price"),
-        priceStatus: document.getElementById("price-status"),
-        analyticsBtn: document.getElementById("refresh-analytics"),
-        analyticsStatus: document.getElementById("analytics-status"),
-        analyticsCard: document.getElementById("analytics-card"),
       };
 
-      function setSelected(event) {
-        state.selected = event;
-        if (!event) {
-          elements.selectedEvent.textContent = "None";
-          elements.selectedMeta.textContent = "";
-          return;
-        }
-        elements.selectedEvent.textContent = event.title || "Untitled";
-        elements.selectedMeta.textContent = `ID: ${event.event_id} • Token: ${event.token_id}`;
-      }
-
-      function renderEvents() {
+      function renderHistory(events) {
         elements.eventsTable.innerHTML = "";
-        elements.eventCount.textContent = String(state.events.length);
-        state.events.forEach((event) => {
+        events.forEach((event) => {
           const row = document.createElement("tr");
           row.innerHTML = `
             <td>${event.title || "-"}</td>
             <td><span class="pill">${event.status}</span></td>
-            <td>${event.event_id}</td>
-            <td>${event.token_id}</td>
+            <td>${event.start_time || "-"}</td>
+            <td>${event.end_time || "-"}</td>
+            <td>${event.min_probability ?? "-"}</td>
+            <td>${event.max_probability ?? "-"}</td>
+            <td>${event.total_volume ?? "-"}</td>
           `;
-          row.addEventListener("click", () => setSelected(event));
           elements.eventsTable.appendChild(row);
         });
       }
 
-      async function fetchEvents() {
-        elements.eventError.textContent = "";
-        const response = await fetch("/events");
-        if (!response.ok) {
-          elements.eventError.textContent = "Failed to load events.";
-          return;
-        }
-        state.events = await response.json();
-        renderEvents();
-      }
-
-      async function ingestEvents() {
-        if (!elements.eventSelect.value) {
-          elements.ingestStatus.textContent = "Choose an event first.";
-          return;
-        }
-        const days = elements.periodSelect.value;
-        const eventId = elements.eventSelect.value;
-        const tagId = elements.tagSelect.value;
-        elements.ingestStatus.textContent = "Fetching...";
-        const response = await fetch(`/ingest/events?category=crypto&days=${days}&event_id=${eventId}&tag_id=${tagId}`, { method: "POST" });
-        if (!response.ok) {
-          elements.ingestStatus.textContent = "Failed.";
-          return;
-        }
-        const events = await response.json();
-        elements.ingestStatus.textContent = `Fetched ${events.length} events.`;
-        state.events = events;
-        renderEvents();
-      }
-
       async function loadCryptoEvents() {
-        const days = elements.periodSelect.value;
         const tagId = elements.tagSelect.value;
         elements.ingestStatus.textContent = "Loading options...";
-        const response = await fetch(`/options/crypto-events?days=${days}&tag_id=${tagId}`);
+        const response = await fetch(`/options/events?tag_id=${tagId}`);
         if (!response.ok) {
           elements.ingestStatus.textContent = "Failed to load options.";
           return;
@@ -316,10 +319,25 @@ def _render_homepage() -> str:
           elements.ingestStatus.textContent = "No crypto events found. Check tag_id or API availability.";
           return;
         }
-        if (options.length > 0) {
-          setSelected(options[0]);
-        }
         elements.ingestStatus.textContent = `Loaded ${options.length} events.`;
+      }
+
+      async function fetchHistory() {
+        elements.eventError.textContent = "";
+        const tagId = elements.tagSelect.value;
+        const eventId = elements.eventSelect.value;
+        const days = elements.periodSelect.value;
+        if (!tagId || !eventId) {
+          elements.eventError.textContent = "Select a tag and event first.";
+          return;
+        }
+        const response = await fetch(`/events/history?tag_id=${tagId}&event_id=${eventId}&days=${days}`);
+        if (!response.ok) {
+          elements.eventError.textContent = "Failed to load history.";
+          return;
+        }
+        const events = await response.json();
+        renderHistory(events);
       }
 
       async function loadTags() {
@@ -340,64 +358,14 @@ def _render_homepage() -> str:
         elements.ingestStatus.textContent = `Loaded ${tags.length} tags.`;
       }
 
-      async function ingestPrice() {
-        if (!state.selected) {
-          elements.priceStatus.textContent = "Select an event first.";
-          return;
-        }
-        elements.priceStatus.textContent = "Fetching price...";
-        const response = await fetch(`/ingest/price/${state.selected.event_id}`, { method: "POST" });
-        if (!response.ok) {
-          elements.priceStatus.textContent = "Failed.";
-          return;
-        }
-        const payload = await response.json();
-        elements.priceStatus.textContent = `Latest price: ${payload.price}`;
-      }
-
-      async function refreshAnalytics() {
-        if (!state.selected) {
-          elements.analyticsStatus.textContent = "Select an event first.";
-          return;
-        }
-        elements.analyticsStatus.textContent = "Loading...";
-        const response = await fetch(`/events/${state.selected.event_id}/analytics`);
-        if (!response.ok) {
-          elements.analyticsStatus.textContent = "Failed.";
-          return;
-        }
-        const analytics = await response.json();
-        elements.analyticsStatus.textContent = "Updated.";
-        elements.analyticsCard.innerHTML = `
-          <div>Min price: <strong>${analytics.min_price ?? "-"}</strong></div>
-          <div>Max price: <strong>${analytics.max_price ?? "-"}</strong></div>
-          <div>Last price: <strong>${analytics.last_price ?? "-"}</strong></div>
-        `;
-      }
-
-      elements.ingestBtn.addEventListener("click", ingestEvents);
+      elements.fetchBtn.addEventListener("click", fetchHistory);
       elements.loadTagsBtn.addEventListener("click", loadTags);
       elements.loadBtn.addEventListener("click", loadCryptoEvents);
-      elements.refreshBtn.addEventListener("click", fetchEvents);
-      elements.ingestPriceBtn.addEventListener("click", ingestPrice);
-      elements.analyticsBtn.addEventListener("click", refreshAnalytics);
-      elements.eventSelect.addEventListener("change", (event) => {
-        const selectedId = event.target.value;
-        const found = state.events.find((item) => item.event_id === selectedId);
-        if (found) {
-          setSelected(found);
-        } else {
-          setSelected({ event_id: selectedId, title: event.target.selectedOptions[0].textContent, token_id: event.target.selectedOptions[0].dataset.tokenId, status: "unknown" });
-        }
-      });
-
       elements.tagSelect.addEventListener("change", () => {
         loadCryptoEvents();
       });
 
       loadTags();
-      loadCryptoEvents();
-      fetchEvents();
     </script>
   </body>
 </html>
@@ -415,7 +383,9 @@ app.routes.extend(
         Route("/ingest/price/{event_id}", ingest_price, methods=["POST"]),
         Route("/events", list_events, methods=["GET"]),
         Route("/options/crypto-events", list_crypto_events, methods=["GET"]),
+        Route("/options/events", list_events_by_tag, methods=["GET"]),
         Route("/options/tags", list_tags, methods=["GET"]),
+        Route("/events/history", get_event_history, methods=["GET"]),
         Route("/events/{event_id}", get_event, methods=["GET"]),
         Route("/events/{event_id}/analytics", get_event_analytics, methods=["GET"]),
     ]
