@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -6,7 +6,7 @@ from app.config import settings
 
 
 class ClobClient:
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(self, base_url: Optional[str] = None) -> None:
         self.base_url = base_url or settings.clob_base_url
 
     def fetch_price(self, token_id: str, side: str = "buy") -> Dict[str, Any]:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from typing import Optional
+
 from app.db import RepositoryBundle
 from app.models import EventAnalytics
 
@@ -10,7 +12,7 @@ class AnalyticsAggregator:
     def __init__(self, repositories: RepositoryBundle) -> None:
         self.repositories = repositories
 
-    def update_event_analytics(self, event_id: str) -> EventAnalytics | None:
+    def update_event_analytics(self, event_id: str) -> Optional[EventAnalytics]:
         event = self.repositories.events.get(event_id)
         if event is None:
             return None

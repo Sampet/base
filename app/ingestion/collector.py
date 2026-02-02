@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 from app.clients.gamma import GammaClient
 from app.config import settings
@@ -10,7 +10,7 @@ from app.models import Event
 
 
 class EventCollector:
-    def __init__(self, repositories: RepositoryBundle, gamma: GammaClient | None = None) -> None:
+    def __init__(self, repositories: RepositoryBundle, gamma: Optional[GammaClient] = None) -> None:
         self.repositories = repositories
         self.gamma = gamma or GammaClient()
 
@@ -28,7 +28,7 @@ class EventCollector:
     def _fetch_markets(self) -> Iterable[Dict[str, Any]]:
         return self.gamma.fetch_markets(params={"category": settings.category_filter})
 
-    def _to_event(self, market: Dict[str, Any]) -> Event | None:
+    def _to_event(self, market: Dict[str, Any]) -> Optional[Event]:
         category = market.get("category") or market.get("category_name") or ""
         if category != settings.category_filter:
             return None
@@ -48,7 +48,7 @@ class EventCollector:
         )
 
     @staticmethod
-    def _parse_datetime(value: Any) -> datetime | None:
+    def _parse_datetime(value: Any) -> Optional[datetime]:
         if not value:
             return None
         if isinstance(value, datetime):
