@@ -70,6 +70,212 @@ async def get_event_analytics(request: Request) -> JSONResponse:
     return JSONResponse(analytics.to_dict())
 
 
+def _render_homepage() -> str:
+    return """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Polymarket Crypto/15M Analytics</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Inter", "Segoe UI", sans-serif;
+        background: #f6f8fa;
+        color: #1f2328;
+      }
+      body { margin: 0; padding: 2rem; }
+      h1 { margin-bottom: 0.25rem; }
+      h2 { margin-top: 2rem; }
+      .card { background: #ffffff; border: 1px solid #d0d7de; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+      .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+      button { background: #0969da; color: #fff; border: none; border-radius: 6px; padding: 0.5rem 0.9rem; cursor: pointer; }
+      button.secondary { background: #6e7781; }
+      button:disabled { background: #94a3b8; cursor: not-allowed; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 0.5rem; border-bottom: 1px solid #eaeef2; text-align: left; font-size: 0.95rem; }
+      code { background: #f6f8fa; padding: 0.1rem 0.25rem; border-radius: 4px; }
+      .status { font-weight: 600; }
+      .note { color: #57606a; }
+      .error { color: #b42318; }
+      .muted { color: #6e7781; }
+      .pill { background: #eef2ff; color: #4338ca; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Polymarket Crypto/15M Analytics</h1>
+    <p class="note">Use this dashboard to fetch events, select one, and compute analytics.</p>
+
+    <div class="card">
+      <h2>1) Ingest markets</h2>
+      <p class="muted">Fetch crypto/15M markets from Gamma and store them locally.</p>
+      <button id="ingest-events">Fetch events</button>
+      <span id="ingest-status" class="note"></span>
+    </div>
+
+    <div class="card">
+      <h2>2) Events</h2>
+      <div class="grid">
+        <div>
+          <button id="refresh-events" class="secondary">Refresh list</button>
+          <p class="note">Total: <span id="event-count">0</span></p>
+        </div>
+        <div>
+          <p class="muted">Selected event</p>
+          <div id="selected-event" class="status">None</div>
+          <p class="note" id="selected-meta"></p>
+        </div>
+      </div>
+      <div id="event-error" class="error"></div>
+      <table id="events-table">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Event ID</th>
+            <th>Token</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>3) Price + analytics</h2>
+      <div class="grid">
+        <div>
+          <button id="ingest-price">Ingest latest price</button>
+          <p class="note" id="price-status"></p>
+        </div>
+        <div>
+          <button id="refresh-analytics" class="secondary">Refresh analytics</button>
+          <p class="note" id="analytics-status"></p>
+        </div>
+      </div>
+      <div id="analytics-card" class="note">No analytics loaded.</div>
+    </div>
+
+    <script>
+      const state = { events: [], selected: null };
+
+      const elements = {
+        ingestBtn: document.getElementById("ingest-events"),
+        ingestStatus: document.getElementById("ingest-status"),
+        refreshBtn: document.getElementById("refresh-events"),
+        eventCount: document.getElementById("event-count"),
+        eventsTable: document.querySelector("#events-table tbody"),
+        selectedEvent: document.getElementById("selected-event"),
+        selectedMeta: document.getElementById("selected-meta"),
+        eventError: document.getElementById("event-error"),
+        ingestPriceBtn: document.getElementById("ingest-price"),
+        priceStatus: document.getElementById("price-status"),
+        analyticsBtn: document.getElementById("refresh-analytics"),
+        analyticsStatus: document.getElementById("analytics-status"),
+        analyticsCard: document.getElementById("analytics-card"),
+      };
+
+      function setSelected(event) {
+        state.selected = event;
+        if (!event) {
+          elements.selectedEvent.textContent = "None";
+          elements.selectedMeta.textContent = "";
+          return;
+        }
+        elements.selectedEvent.textContent = event.title || "Untitled";
+        elements.selectedMeta.textContent = `ID: ${event.event_id} • Token: ${event.token_id}`;
+      }
+
+      function renderEvents() {
+        elements.eventsTable.innerHTML = "";
+        elements.eventCount.textContent = String(state.events.length);
+        state.events.forEach((event) => {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${event.title || "-"}</td>
+            <td><span class="pill">${event.status}</span></td>
+            <td>${event.event_id}</td>
+            <td>${event.token_id}</td>
+          `;
+          row.addEventListener("click", () => setSelected(event));
+          elements.eventsTable.appendChild(row);
+        });
+      }
+
+      async function fetchEvents() {
+        elements.eventError.textContent = "";
+        const response = await fetch("/events");
+        if (!response.ok) {
+          elements.eventError.textContent = "Failed to load events.";
+          return;
+        }
+        state.events = await response.json();
+        renderEvents();
+      }
+
+      async function ingestEvents() {
+        elements.ingestStatus.textContent = "Fetching...";
+        const response = await fetch("/ingest/events", { method: "POST" });
+        if (!response.ok) {
+          elements.ingestStatus.textContent = "Failed.";
+          return;
+        }
+        const events = await response.json();
+        elements.ingestStatus.textContent = `Fetched ${events.length} events.`;
+        state.events = events;
+        renderEvents();
+      }
+
+      async function ingestPrice() {
+        if (!state.selected) {
+          elements.priceStatus.textContent = "Select an event first.";
+          return;
+        }
+        elements.priceStatus.textContent = "Fetching price...";
+        const response = await fetch(`/ingest/price/${state.selected.event_id}`, { method: "POST" });
+        if (!response.ok) {
+          elements.priceStatus.textContent = "Failed.";
+          return;
+        }
+        const payload = await response.json();
+        elements.priceStatus.textContent = `Latest price: ${payload.price}`;
+      }
+
+      async function refreshAnalytics() {
+        if (!state.selected) {
+          elements.analyticsStatus.textContent = "Select an event first.";
+          return;
+        }
+        elements.analyticsStatus.textContent = "Loading...";
+        const response = await fetch(`/events/${state.selected.event_id}/analytics`);
+        if (!response.ok) {
+          elements.analyticsStatus.textContent = "Failed.";
+          return;
+        }
+        const analytics = await response.json();
+        elements.analyticsStatus.textContent = "Updated.";
+        elements.analyticsCard.innerHTML = `
+          <div>Min price: <strong>${analytics.min_price ?? "-"}</strong></div>
+          <div>Max price: <strong>${analytics.max_price ?? "-"}</strong></div>
+          <div>Last price: <strong>${analytics.last_price ?? "-"}</strong></div>
+        `;
+      }
+
+      elements.ingestBtn.addEventListener("click", ingestEvents);
+      elements.refreshBtn.addEventListener("click", fetchEvents);
+      elements.ingestPriceBtn.addEventListener("click", ingestPrice);
+      elements.analyticsBtn.addEventListener("click", refreshAnalytics);
+
+      fetchEvents();
+    </script>
+  </body>
+</html>
+"""
+
+
+async def homepage(request: Request) -> HTMLResponse:
+    return HTMLResponse(_render_homepage())
+
+
 app.routes.extend(
     [
         Route("/", homepage, methods=["GET"]),
@@ -80,36 +286,3 @@ app.routes.extend(
         Route("/events/{event_id}/analytics", get_event_analytics, methods=["GET"]),
     ]
 )
-def _render_homepage() -> str:
-    return """<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Polymarket Crypto/15M Analytics</title>
-    <style>
-      body { font-family: sans-serif; margin: 2rem; color: #1f2328; }
-      h1 { margin-bottom: 0.25rem; }
-      code { background: #f6f8fa; padding: 0.1rem 0.25rem; border-radius: 4px; }
-      ul { line-height: 1.6; }
-      .note { margin-top: 1.5rem; color: #57606a; }
-    </style>
-  </head>
-  <body>
-    <h1>Polymarket Crypto/15M Analytics</h1>
-    <p>Service is running. Available endpoints:</p>
-    <ul>
-      <li><code>POST /ingest/events</code> — fetch & store crypto/15M events</li>
-      <li><code>POST /ingest/price/&lt;event_id&gt;</code> — ingest latest price for an event</li>
-      <li><code>GET /events</code> — list events</li>
-      <li><code>GET /events/&lt;event_id&gt;</code> — fetch event details</li>
-      <li><code>GET /events/&lt;event_id&gt;/analytics</code> — fetch analytics</li>
-    </ul>
-    <p class="note">Tip: run ingestion first, then refresh analytics.</p>
-  </body>
-</html>
-"""
-
-
-async def homepage(request: Request) -> HTMLResponse:
-    return HTMLResponse(_render_homepage())
