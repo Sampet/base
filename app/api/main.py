@@ -79,7 +79,6 @@ async def list_tags(request: Request) -> JSONResponse:
     payload = [
         {
             "id": tag.get("id"),
-            "label": tag.get("label"),
             "slug": tag.get("slug"),
         }
         for tag in tags
@@ -335,7 +334,7 @@ def _render_homepage() -> str:
         tags.forEach((tag) => {
           const option = document.createElement("option");
           option.value = tag.id;
-          option.textContent = tag.label || tag.slug || tag.id;
+          option.textContent = tag.slug || tag.id;
           elements.tagSelect.appendChild(option);
         });
         elements.ingestStatus.textContent = `Loaded ${tags.length} tags.`;

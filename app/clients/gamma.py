@@ -20,9 +20,9 @@ class GammaClient:
             return payload.get("markets", [])
         return []
 
-    def fetch_tags(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def fetch_tags(self) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/tags"
-        response = requests.get(url, params={"limit": limit}, timeout=30)
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
         payload = response.json()
         if isinstance(payload, list):
