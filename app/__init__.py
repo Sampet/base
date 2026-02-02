@@ -1,0 +1,1 @@
+"""Polymarket analytics application."""
