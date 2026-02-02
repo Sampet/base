@@ -24,7 +24,7 @@ clob_client = ClobClient()
 
 
 async def ingest_events(request: Request) -> JSONResponse:
-    category = request.query_params.get("category") or settings.category_filter
+    category = request.query_params.get("category") or settings.crypto_category
     event_id = request.query_params.get("event_id")
     days_param = request.query_params.get("days")
     days = int(days_param) if days_param and days_param.isdigit() else None
@@ -59,7 +59,7 @@ async def list_events(request: Request) -> JSONResponse:
 async def list_crypto_events(request: Request) -> JSONResponse:
     days_param = request.query_params.get("days")
     days = int(days_param) if days_param and days_param.isdigit() else None
-    events = collector.collect(category="crypto", days=days)
+    events = collector.collect(category=settings.crypto_category, days=days)
     payload = [
         {
             "event_id": event.event_id,

@@ -20,11 +20,12 @@ class EventCollector:
         days: Optional[int] = None,
         event_id: Optional[str] = None,
     ) -> List[Event]:
-        markets = self._fetch_markets(category)
+        category_filter = category or settings.category_filter
+        markets = self._fetch_markets(category_filter)
         collected: List[Event] = []
         cutoff = self._cutoff_datetime(days)
         for market in markets:
-            event = self._to_event(market)
+            event = self._to_event(market, category_filter)
             if event is None:
                 continue
             if event_id and event.event_id != event_id:
@@ -35,13 +36,12 @@ class EventCollector:
             collected.append(event)
         return collected
 
-    def _fetch_markets(self, category: Optional[str]) -> Iterable[Dict[str, Any]]:
-        category_filter = category or settings.category_filter
+    def _fetch_markets(self, category_filter: str) -> Iterable[Dict[str, Any]]:
         return self.gamma.fetch_markets(params={"category": category_filter})
 
-    def _to_event(self, market: Dict[str, Any]) -> Optional[Event]:
+    def _to_event(self, market: Dict[str, Any], category_filter: str) -> Optional[Event]:
         category = market.get("category") or market.get("category_name") or ""
-        if category != settings.category_filter:
+        if not self._matches_category(category, category_filter):
             return None
         token_id = market.get("token_id") or market.get("asset_id")
         if not token_id:
@@ -82,3 +82,12 @@ class EventCollector:
         if event.end_time and event.end_time >= cutoff:
             return True
         return False
+
+    @staticmethod
+    def _normalize_category(value: str) -> str:
+        return value.strip().lower().replace(" ", "")
+
+    def _matches_category(self, category: str, category_filter: str) -> bool:
+        normalized = self._normalize_category(category)
+        target = self._normalize_category(category_filter)
+        return normalized == target or target in normalized
