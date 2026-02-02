@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
 
 from app.analytics.aggregator import AnalyticsAggregator
@@ -72,6 +72,7 @@ async def get_event_analytics(request: Request) -> JSONResponse:
 
 app.routes.extend(
     [
+        Route("/", homepage, methods=["GET"]),
         Route("/ingest/events", ingest_events, methods=["POST"]),
         Route("/ingest/price/{event_id}", ingest_price, methods=["POST"]),
         Route("/events", list_events, methods=["GET"]),
@@ -79,3 +80,36 @@ app.routes.extend(
         Route("/events/{event_id}/analytics", get_event_analytics, methods=["GET"]),
     ]
 )
+def _render_homepage() -> str:
+    return """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Polymarket Crypto/15M Analytics</title>
+    <style>
+      body { font-family: sans-serif; margin: 2rem; color: #1f2328; }
+      h1 { margin-bottom: 0.25rem; }
+      code { background: #f6f8fa; padding: 0.1rem 0.25rem; border-radius: 4px; }
+      ul { line-height: 1.6; }
+      .note { margin-top: 1.5rem; color: #57606a; }
+    </style>
+  </head>
+  <body>
+    <h1>Polymarket Crypto/15M Analytics</h1>
+    <p>Service is running. Available endpoints:</p>
+    <ul>
+      <li><code>POST /ingest/events</code> — fetch & store crypto/15M events</li>
+      <li><code>POST /ingest/price/&lt;event_id&gt;</code> — ingest latest price for an event</li>
+      <li><code>GET /events</code> — list events</li>
+      <li><code>GET /events/&lt;event_id&gt;</code> — fetch event details</li>
+      <li><code>GET /events/&lt;event_id&gt;/analytics</code> — fetch analytics</li>
+    </ul>
+    <p class="note">Tip: run ingestion first, then refresh analytics.</p>
+  </body>
+</html>
+"""
+
+
+async def homepage(request: Request) -> HTMLResponse:
+    return HTMLResponse(_render_homepage())
