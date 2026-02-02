@@ -289,6 +289,10 @@ def _render_homepage() -> str:
           option.dataset.tokenId = event.token_id;
           elements.eventSelect.appendChild(option);
         });
+        if (options.length === 0) {
+          elements.ingestStatus.textContent = "No crypto events found. Check tag_id or API availability.";
+          return;
+        }
         if (options.length > 0) {
           setSelected(options[0]);
         }

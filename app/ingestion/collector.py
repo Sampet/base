@@ -13,6 +13,7 @@ class EventCollector:
     def __init__(self, repositories: RepositoryBundle, gamma: Optional[GammaClient] = None) -> None:
         self.repositories = repositories
         self.gamma = gamma or GammaClient()
+        self._tag_cache: Dict[str, Optional[str]] = {}
 
     def collect(
         self,
@@ -37,13 +38,26 @@ class EventCollector:
         return collected
 
     def _fetch_markets(self, category_filter: str) -> Iterable[Dict[str, Any]]:
+        if category_filter == settings.crypto_category:
+            tag_id = self._get_tag_id(settings.crypto_category)
+            if tag_id is not None:
+                events = self.gamma.fetch_events(
+                    params={"tag_id": tag_id, "active": "true", "closed": "false"}
+                )
+                if events:
+                    return events
+            return self.gamma.fetch_markets(params={"category": category_filter})
         return self.gamma.fetch_markets(params={"category": category_filter})
 
     def _to_event(self, market: Dict[str, Any], category_filter: str) -> Optional[Event]:
         category = market.get("category") or market.get("category_name") or ""
-        if not self._matches_category(category, category_filter):
+        if category_filter != settings.crypto_category and not self._matches_category(category, category_filter):
             return None
         token_id = market.get("token_id") or market.get("asset_id")
+        if not token_id:
+            token_ids = market.get("clobTokenIds") or market.get("clob_token_ids")
+            if isinstance(token_ids, list) and token_ids:
+                token_id = token_ids[0]
         if not token_id:
             return None
         return Event(
@@ -91,3 +105,18 @@ class EventCollector:
         normalized = self._normalize_category(category)
         target = self._normalize_category(category_filter)
         return normalized == target or target in normalized
+
+    def _get_tag_id(self, tag_name: str) -> Optional[str]:
+        normalized = self._normalize_category(tag_name)
+        if normalized in self._tag_cache:
+            return self._tag_cache[normalized]
+        tags = self.gamma.fetch_tags()
+        tag_id: Optional[str] = None
+        for tag in tags:
+            label = self._normalize_category(str(tag.get("label", "")))
+            slug = self._normalize_category(str(tag.get("slug", "")))
+            if label == normalized or slug == normalized:
+                tag_id = str(tag.get("id"))
+                break
+        self._tag_cache[normalized] = tag_id
+        return self._tag_cache[normalized]
