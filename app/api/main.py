@@ -24,7 +24,11 @@ clob_client = ClobClient()
 
 
 async def ingest_events(request: Request) -> JSONResponse:
-    events = collector.collect()
+    category = request.query_params.get("category") or settings.category_filter
+    event_id = request.query_params.get("event_id")
+    days_param = request.query_params.get("days")
+    days = int(days_param) if days_param and days_param.isdigit() else None
+    events = collector.collect(category=category, days=days, event_id=event_id)
     return JSONResponse([event.to_dict() for event in events])
 
 
@@ -50,6 +54,22 @@ async def list_events(request: Request) -> JSONResponse:
     category = request.query_params.get("category", settings.category_filter)
     events = repositories.events.list_by_category(category)
     return JSONResponse([event.to_dict() for event in events])
+
+
+async def list_crypto_events(request: Request) -> JSONResponse:
+    days_param = request.query_params.get("days")
+    days = int(days_param) if days_param and days_param.isdigit() else None
+    events = collector.collect(category="crypto", days=days)
+    payload = [
+        {
+            "event_id": event.event_id,
+            "title": event.title,
+            "token_id": event.token_id,
+            "status": event.status,
+        }
+        for event in events
+    ]
+    return JSONResponse(payload)
 
 
 async def get_event(request: Request) -> JSONResponse:
@@ -107,9 +127,27 @@ def _render_homepage() -> str:
     <p class="note">Use this dashboard to fetch events, select one, and compute analytics.</p>
 
     <div class="card">
-      <h2>1) Ingest markets</h2>
-      <p class="muted">Fetch crypto/15M markets from Gamma and store them locally.</p>
-      <button id="ingest-events">Fetch events</button>
+      <h2>1) Select event & period</h2>
+      <div class="grid">
+        <div>
+          <label class="muted" for="event-select">Crypto event</label>
+          <select id="event-select" style="width:100%; padding:0.4rem; border-radius:6px; border:1px solid #d0d7de;"></select>
+        </div>
+        <div>
+          <label class="muted" for="period-select">Period</label>
+          <select id="period-select" style="width:100%; padding:0.4rem; border-radius:6px; border:1px solid #d0d7de;">
+            <option value="1">1 day</option>
+            <option value="7" selected>7 days</option>
+            <option value="14">14 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </div>
+      </div>
+      <p class="note">Choose a crypto event and period, then fetch data.</p>
+      <div class="grid">
+        <button id="load-events">Load crypto events</button>
+        <button id="ingest-events" class="secondary">Fetch data</button>
+      </div>
       <span id="ingest-status" class="note"></span>
     </div>
 
@@ -160,6 +198,9 @@ def _render_homepage() -> str:
 
       const elements = {
         ingestBtn: document.getElementById("ingest-events"),
+        loadBtn: document.getElementById("load-events"),
+        eventSelect: document.getElementById("event-select"),
+        periodSelect: document.getElementById("period-select"),
         ingestStatus: document.getElementById("ingest-status"),
         refreshBtn: document.getElementById("refresh-events"),
         eventCount: document.getElementById("event-count"),
@@ -213,8 +254,14 @@ def _render_homepage() -> str:
       }
 
       async function ingestEvents() {
+        if (!elements.eventSelect.value) {
+          elements.ingestStatus.textContent = "Choose an event first.";
+          return;
+        }
+        const days = elements.periodSelect.value;
+        const eventId = elements.eventSelect.value;
         elements.ingestStatus.textContent = "Fetching...";
-        const response = await fetch("/ingest/events", { method: "POST" });
+        const response = await fetch(`/ingest/events?category=crypto&days=${days}&event_id=${eventId}`, { method: "POST" });
         if (!response.ok) {
           elements.ingestStatus.textContent = "Failed.";
           return;
@@ -223,6 +270,29 @@ def _render_homepage() -> str:
         elements.ingestStatus.textContent = `Fetched ${events.length} events.`;
         state.events = events;
         renderEvents();
+      }
+
+      async function loadCryptoEvents() {
+        const days = elements.periodSelect.value;
+        elements.ingestStatus.textContent = "Loading options...";
+        const response = await fetch(`/options/crypto-events?days=${days}`);
+        if (!response.ok) {
+          elements.ingestStatus.textContent = "Failed to load options.";
+          return;
+        }
+        const options = await response.json();
+        elements.eventSelect.innerHTML = "";
+        options.forEach((event) => {
+          const option = document.createElement("option");
+          option.value = event.event_id;
+          option.textContent = event.title || event.event_id;
+          option.dataset.tokenId = event.token_id;
+          elements.eventSelect.appendChild(option);
+        });
+        if (options.length > 0) {
+          setSelected(options[0]);
+        }
+        elements.ingestStatus.textContent = `Loaded ${options.length} events.`;
       }
 
       async function ingestPrice() {
@@ -261,10 +331,21 @@ def _render_homepage() -> str:
       }
 
       elements.ingestBtn.addEventListener("click", ingestEvents);
+      elements.loadBtn.addEventListener("click", loadCryptoEvents);
       elements.refreshBtn.addEventListener("click", fetchEvents);
       elements.ingestPriceBtn.addEventListener("click", ingestPrice);
       elements.analyticsBtn.addEventListener("click", refreshAnalytics);
+      elements.eventSelect.addEventListener("change", (event) => {
+        const selectedId = event.target.value;
+        const found = state.events.find((item) => item.event_id === selectedId);
+        if (found) {
+          setSelected(found);
+        } else {
+          setSelected({ event_id: selectedId, title: event.target.selectedOptions[0].textContent, token_id: event.target.selectedOptions[0].dataset.tokenId, status: "unknown" });
+        }
+      });
 
+      loadCryptoEvents();
       fetchEvents();
     </script>
   </body>
@@ -282,6 +363,7 @@ app.routes.extend(
         Route("/ingest/events", ingest_events, methods=["POST"]),
         Route("/ingest/price/{event_id}", ingest_price, methods=["POST"]),
         Route("/events", list_events, methods=["GET"]),
+        Route("/options/crypto-events", list_crypto_events, methods=["GET"]),
         Route("/events/{event_id}", get_event, methods=["GET"]),
         Route("/events/{event_id}/analytics", get_event_analytics, methods=["GET"]),
     ]
