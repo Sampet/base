@@ -59,7 +59,9 @@ async def list_events(request: Request) -> JSONResponse:
 async def list_crypto_events(request: Request) -> JSONResponse:
     days_param = request.query_params.get("days")
     days = int(days_param) if days_param and days_param.isdigit() else None
-    events = collector.collect(category=settings.crypto_category, days=days)
+    tag_param = request.query_params.get("tag_id")
+    tag_id = tag_param.strip() if tag_param else None
+    events = collector.collect(category=settings.crypto_category, days=days, tag_id=tag_id)
     payload = [
         {
             "event_id": event.event_id,
@@ -68,6 +70,19 @@ async def list_crypto_events(request: Request) -> JSONResponse:
             "status": event.status,
         }
         for event in events
+    ]
+    return JSONResponse(payload)
+
+
+async def list_tags(request: Request) -> JSONResponse:
+    tags = collector.list_tags()
+    payload = [
+        {
+            "id": tag.get("id"),
+            "label": tag.get("label"),
+            "slug": tag.get("slug"),
+        }
+        for tag in tags
     ]
     return JSONResponse(payload)
 
@@ -127,11 +142,15 @@ def _render_homepage() -> str:
     <p class="note">Use this dashboard to fetch events, select one, and compute analytics.</p>
 
     <div class="card">
-      <h2>1) Select event & period</h2>
+      <h2>1) Select tag, event & period</h2>
       <div class="grid">
         <div>
           <label class="muted" for="event-select">Crypto event</label>
           <select id="event-select" style="width:100%; padding:0.4rem; border-radius:6px; border:1px solid #d0d7de;"></select>
+        </div>
+        <div>
+          <label class="muted" for="tag-select">Tag</label>
+          <select id="tag-select" style="width:100%; padding:0.4rem; border-radius:6px; border:1px solid #d0d7de;"></select>
         </div>
         <div>
           <label class="muted" for="period-select">Period</label>
@@ -145,6 +164,7 @@ def _render_homepage() -> str:
       </div>
       <p class="note">Choose a crypto event and period, then fetch data.</p>
       <div class="grid">
+        <button id="load-tags">Load tags</button>
         <button id="load-events">Load crypto events</button>
         <button id="ingest-events" class="secondary">Fetch data</button>
       </div>
@@ -199,7 +219,9 @@ def _render_homepage() -> str:
       const elements = {
         ingestBtn: document.getElementById("ingest-events"),
         loadBtn: document.getElementById("load-events"),
+        loadTagsBtn: document.getElementById("load-tags"),
         eventSelect: document.getElementById("event-select"),
+        tagSelect: document.getElementById("tag-select"),
         periodSelect: document.getElementById("period-select"),
         ingestStatus: document.getElementById("ingest-status"),
         refreshBtn: document.getElementById("refresh-events"),
@@ -260,8 +282,9 @@ def _render_homepage() -> str:
         }
         const days = elements.periodSelect.value;
         const eventId = elements.eventSelect.value;
+        const tagId = elements.tagSelect.value;
         elements.ingestStatus.textContent = "Fetching...";
-        const response = await fetch(`/ingest/events?category=crypto&days=${days}&event_id=${eventId}`, { method: "POST" });
+        const response = await fetch(`/ingest/events?category=crypto&days=${days}&event_id=${eventId}&tag_id=${tagId}`, { method: "POST" });
         if (!response.ok) {
           elements.ingestStatus.textContent = "Failed.";
           return;
@@ -274,8 +297,9 @@ def _render_homepage() -> str:
 
       async function loadCryptoEvents() {
         const days = elements.periodSelect.value;
+        const tagId = elements.tagSelect.value;
         elements.ingestStatus.textContent = "Loading options...";
-        const response = await fetch(`/options/crypto-events?days=${days}`);
+        const response = await fetch(`/options/crypto-events?days=${days}&tag_id=${tagId}`);
         if (!response.ok) {
           elements.ingestStatus.textContent = "Failed to load options.";
           return;
@@ -297,6 +321,24 @@ def _render_homepage() -> str:
           setSelected(options[0]);
         }
         elements.ingestStatus.textContent = `Loaded ${options.length} events.`;
+      }
+
+      async function loadTags() {
+        elements.ingestStatus.textContent = "Loading tags...";
+        const response = await fetch("/options/tags");
+        if (!response.ok) {
+          elements.ingestStatus.textContent = "Failed to load tags.";
+          return;
+        }
+        const tags = await response.json();
+        elements.tagSelect.innerHTML = "";
+        tags.forEach((tag) => {
+          const option = document.createElement("option");
+          option.value = tag.id;
+          option.textContent = tag.label || tag.slug || tag.id;
+          elements.tagSelect.appendChild(option);
+        });
+        elements.ingestStatus.textContent = `Loaded ${tags.length} tags.`;
       }
 
       async function ingestPrice() {
@@ -335,6 +377,7 @@ def _render_homepage() -> str:
       }
 
       elements.ingestBtn.addEventListener("click", ingestEvents);
+      elements.loadTagsBtn.addEventListener("click", loadTags);
       elements.loadBtn.addEventListener("click", loadCryptoEvents);
       elements.refreshBtn.addEventListener("click", fetchEvents);
       elements.ingestPriceBtn.addEventListener("click", ingestPrice);
@@ -349,6 +392,11 @@ def _render_homepage() -> str:
         }
       });
 
+      elements.tagSelect.addEventListener("change", () => {
+        loadCryptoEvents();
+      });
+
+      loadTags();
       loadCryptoEvents();
       fetchEvents();
     </script>
@@ -368,6 +416,7 @@ app.routes.extend(
         Route("/ingest/price/{event_id}", ingest_price, methods=["POST"]),
         Route("/events", list_events, methods=["GET"]),
         Route("/options/crypto-events", list_crypto_events, methods=["GET"]),
+        Route("/options/tags", list_tags, methods=["GET"]),
         Route("/events/{event_id}", get_event, methods=["GET"]),
         Route("/events/{event_id}/analytics", get_event_analytics, methods=["GET"]),
     ]

@@ -20,9 +20,10 @@ class EventCollector:
         category: Optional[str] = None,
         days: Optional[int] = None,
         event_id: Optional[str] = None,
+        tag_id: Optional[str] = None,
     ) -> List[Event]:
         category_filter = category or settings.category_filter
-        markets = self._fetch_markets(category_filter)
+        markets = self._fetch_markets(category_filter, tag_id=tag_id)
         collected: List[Event] = []
         cutoff = self._cutoff_datetime(days)
         for market in markets:
@@ -37,12 +38,12 @@ class EventCollector:
             collected.append(event)
         return collected
 
-    def _fetch_markets(self, category_filter: str) -> Iterable[Dict[str, Any]]:
+    def _fetch_markets(self, category_filter: str, tag_id: Optional[str] = None) -> Iterable[Dict[str, Any]]:
         if category_filter == settings.crypto_category:
-            tag_id = self._get_tag_id(settings.crypto_category)
-            if tag_id is not None:
+            resolved_tag_id = tag_id or self._get_tag_id(settings.crypto_category)
+            if resolved_tag_id is not None:
                 events = self.gamma.fetch_events(
-                    params={"tag_id": tag_id, "active": "true", "closed": "false"}
+                    params={"tag_id": resolved_tag_id, "active": "true", "closed": "false"}
                 )
                 if events:
                     return events
@@ -120,3 +121,6 @@ class EventCollector:
                 break
         self._tag_cache[normalized] = tag_id
         return self._tag_cache[normalized]
+
+    def list_tags(self) -> List[Dict[str, Any]]:
+        return self.gamma.fetch_tags()
