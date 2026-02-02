@@ -20,16 +20,31 @@ class GammaClient:
             return payload.get("markets", [])
         return []
 
-    def fetch_tags(self) -> List[Dict[str, Any]]:
+    def fetch_tags(self, limit: int = 100) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/tags"
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        payload = response.json()
-        if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
-            return payload.get("tags", [])
-        return []
+        all_tags: List[Dict[str, Any]] = []
+        offset = 0
+        while True:
+            response = requests.get(
+                url,
+                params={"limit": limit, "offset": offset},
+                timeout=30,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, list):
+                batch = payload
+            elif isinstance(payload, dict):
+                batch = payload.get("tags", [])
+            else:
+                batch = []
+            if not batch:
+                break
+            all_tags.extend(batch)
+            if len(batch) < limit:
+                break
+            offset += limit
+        return all_tags
 
     def fetch_events(self, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/events"
