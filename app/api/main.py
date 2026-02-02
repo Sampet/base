@@ -78,13 +78,18 @@ async def list_crypto_events(request: Request) -> JSONResponse:
 
 async def list_tags(request: Request) -> JSONResponse:
     tags = collector.list_tags()
-    payload = [
-        {
-            "id": tag.get("id"),
-            "slug": tag.get("slug"),
-        }
-        for tag in tags
-    ]
+    filtered = []
+    for tag in tags:
+        slug = tag.get("slug")
+        if not slug or "crypto" not in slug.lower():
+            continue
+        filtered.append(
+            {
+                "id": tag.get("id"),
+                "slug": slug,
+            }
+        )
+    payload = sorted(filtered, key=lambda item: item["slug"])
     return JSONResponse(payload)
 
 
