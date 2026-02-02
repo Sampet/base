@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.db import RepositoryBundle
 from app.models import EventAnalytics
@@ -14,7 +14,7 @@ class AnalyticsAggregator:
         event = self.repositories.events.get(event_id)
         if event is None:
             return None
-        end_time = event.end_time if event.status == "resolved" else datetime.now(tz=event.start_time.tzinfo) if event.start_time else None
+        end_time = event.end_time if event.status == "resolved" else datetime.now(tz=timezone.utc)
         prices = list(
             self.repositories.list_prices_in_window(
                 market_id=event.market_id,

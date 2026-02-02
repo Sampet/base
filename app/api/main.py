@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import FastAPI, HTTPException
@@ -29,13 +29,13 @@ def ingest_price(event_id: str) -> PricePoint:
     event = repositories.events.get(event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    token_id = event.market_id
+    token_id = event.token_id
     payload = clob_client.fetch_price(token_id)
     price = float(payload.get("price", 0))
     point = PricePoint(
         market_id=event.market_id,
         token_id=token_id,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(tz=timezone.utc),
         price=price,
     )
     repositories.prices.add(point)

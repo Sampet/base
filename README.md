@@ -22,7 +22,7 @@ Build a service that collects all current and resolved events from the **crypto/
    - Expose endpoints to query events and analytics.
 
 ## Data model (MVP)
-- `events`: core lifecycle info (start/end/resolution/status)
+- `events`: core lifecycle info (start/end/resolution/status) + token_id
 - `price_history`: time series price points by token/market
 - `event_analytics`: precomputed min/max/last price
 

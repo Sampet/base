@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class Event(BaseModel):
     event_id: str
     market_id: str
+    token_id: str
     title: str
     category: str
     start_time: Optional[datetime] = None

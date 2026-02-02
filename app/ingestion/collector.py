@@ -32,9 +32,13 @@ class EventCollector:
         category = market.get("category") or market.get("category_name") or ""
         if category != settings.category_filter:
             return None
+        token_id = market.get("token_id") or market.get("asset_id")
+        if not token_id:
+            return None
         return Event(
             event_id=str(market.get("event_id") or market.get("id")),
             market_id=str(market.get("market_id") or market.get("id")),
+            token_id=str(token_id),
             title=str(market.get("question") or market.get("title") or ""),
             category=category,
             start_time=self._parse_datetime(market.get("start_date")),
