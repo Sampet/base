@@ -56,3 +56,16 @@ class GammaClient:
         if isinstance(payload, dict):
             return payload.get("events", [])
         return []
+
+    def fetch_markets_by_tag(self, tag_id: str) -> List[Dict[str, Any]]:
+        return list(self.fetch_markets(params={"tag_id": tag_id}))
+
+    def fetch_market_by_id(self, market_id: str) -> Optional[Dict[str, Any]]:
+        markets = self.fetch_markets(params={"id": market_id})
+        if markets:
+            return markets[0]
+        markets = self.fetch_markets(params={"ids": market_id})
+        for market in markets:
+            if str(market.get("id")) == str(market_id):
+                return market
+        return None

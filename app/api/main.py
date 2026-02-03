@@ -97,13 +97,14 @@ async def list_events_by_tag(request: Request) -> JSONResponse:
     tag_id = request.query_params.get("tag_id")
     if not tag_id:
         raise HTTPException(status_code=400, detail="tag_id is required")
-    events = gamma_client.fetch_events(params={"tag_id": tag_id})
+    events = gamma_client.fetch_markets_by_tag(tag_id)
     payload = [
         {
-            "id": event.get("id") or event.get("event_id"),
-            "title": event.get("title") or event.get("question"),
+            "id": event.get("id"),
+            "title": event.get("question") or event.get("title"),
         }
         for event in events
+        if event.get("id")
     ]
     return JSONResponse(payload)
 
@@ -117,55 +118,34 @@ async def get_event_history(request: Request) -> JSONResponse:
     days = int(days_param) if days_param.isdigit() else None
     if not days:
         raise HTTPException(status_code=400, detail="days must be numeric")
-    cutoff = collector._cutoff_datetime(days)
-    events = gamma_client.fetch_events(params={"tag_id": tag_id})
-    result = []
-    for event in events:
-        candidate_id = event.get("id") or event.get("event_id")
-        if str(candidate_id) != str(event_id):
+    market = gamma_client.fetch_market_by_id(event_id)
+    if market is None:
+        raise HTTPException(status_code=404, detail="Market not found for event_id")
+    start_time = collector._parse_datetime(market.get("startDate") or market.get("start_date"))
+    end_time = collector._parse_datetime(market.get("endDate") or market.get("end_date"))
+    outcome_prices = market.get("outcomePrices") or market.get("outcome_prices") or []
+    prices = []
+    for price in outcome_prices:
+        try:
+            prices.append(float(price))
+        except (TypeError, ValueError):
             continue
-        start_time = collector._parse_datetime(event.get("startDate") or event.get("start_date"))
-        end_time = collector._parse_datetime(event.get("endDate") or event.get("end_date"))
-        if cutoff and not collector._is_recent(
-            Event(
-                event_id=str(event.get("id")),
-                market_id=str(event.get("id")),
-                token_id="",
-                title=str(event.get("title") or ""),
-                category="",
-                start_time=start_time,
-                end_time=end_time,
-                resolution=None,
-                status="active",
-            ),
-            cutoff,
-        ):
-            continue
-        outcome_prices = event.get("outcomePrices") or event.get("outcome_prices") or []
-        prices = []
-        for price in outcome_prices:
-            try:
-                prices.append(float(price))
-            except (TypeError, ValueError):
-                continue
-        status = "closed" if event.get("closed") else "active"
-        if event.get("resolved"):
-            status = "resolved"
-        volume = event.get("volume") or event.get("volumeNum") or event.get("volume_num")
-        result.append(
-            {
-                "event_id": event.get("id"),
-                "title": event.get("title") or event.get("question"),
-                "start_time": start_time.isoformat() if start_time else None,
-                "end_time": end_time.isoformat() if end_time else None,
-                "status": status,
-                "max_probability": max(prices) if prices else None,
-                "min_probability": min(prices) if prices else None,
-                "total_volume": volume,
-            }
-        )
-    if not result:
-        raise HTTPException(status_code=404, detail="No events found for selection")
+    status = "closed" if market.get("closed") else "active"
+    if market.get("resolved"):
+        status = "resolved"
+    volume = market.get("volume") or market.get("volumeNum") or market.get("volume_num")
+    result = [
+        {
+            "event_id": market.get("id"),
+            "title": market.get("question") or market.get("title"),
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": end_time.isoformat() if end_time else None,
+            "status": status,
+            "max_probability": max(prices) if prices else None,
+            "min_probability": min(prices) if prices else None,
+            "total_volume": volume,
+        }
+    ]
     return JSONResponse(result)
 
 
@@ -316,15 +296,15 @@ def _render_homepage() -> str:
         elements.eventSelect.innerHTML = "";
         options.forEach((event) => {
           const option = document.createElement("option");
-          option.value = event.event_id;
-          option.textContent = event.title || event.event_id;
-          option.dataset.tokenId = event.token_id;
+          option.value = event.id;
+          option.textContent = event.title || event.id;
           elements.eventSelect.appendChild(option);
         });
         if (options.length === 0) {
-          elements.ingestStatus.textContent = "No crypto events found. Check tag_id or API availability.";
+          elements.ingestStatus.textContent = "No events found for this tag.";
           return;
         }
+        elements.eventSelect.value = options[0].id;
         elements.ingestStatus.textContent = `Loaded ${options.length} events.`;
       }
 
