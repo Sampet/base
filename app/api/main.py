@@ -52,6 +52,38 @@ async def ingest_price(request: Request) -> JSONResponse:
     return JSONResponse(point.to_dict())
 
 
+async def sample_price(request: Request) -> JSONResponse:
+    event_id = request.query_params.get("event_id")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="event_id is required")
+    market = gamma_client.fetch_market_by_id(event_id)
+    if market is None:
+        raise HTTPException(status_code=404, detail="Market not found for event_id")
+    token_ids = market.get("clobTokenIds") or market.get("clob_token_ids") or []
+    if not isinstance(token_ids, list) or not token_ids:
+        raise HTTPException(status_code=404, detail="No clob token id available")
+    token_id = str(token_ids[0])
+    payload = clob_client.fetch_price(token_id)
+    price = float(payload.get("price", 0))
+    point = PricePoint(
+        market_id=str(market.get("id")),
+        token_id=token_id,
+        timestamp=datetime.now(tz=timezone.utc),
+        price=price,
+    )
+    repositories.prices.add(point)
+    return JSONResponse(point.to_dict())
+
+
+async def price_history(request: Request) -> JSONResponse:
+    event_id = request.query_params.get("event_id")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="event_id is required")
+    points = repositories.prices.list_for_market(event_id)
+    payload = [point.to_dict() for point in points]
+    return JSONResponse(payload)
+
+
 async def list_events(request: Request) -> JSONResponse:
     category = request.query_params.get("category", settings.category_filter)
     events = repositories.events.list_by_category(category)
@@ -252,6 +284,16 @@ def _render_homepage() -> str:
       </table>
     </div>
 
+    <div class="card">
+      <h2>3) Probability over time</h2>
+      <div class="grid">
+        <button id="start-tracking">Start tracking price</button>
+        <button id="stop-tracking" class="secondary">Stop tracking</button>
+      </div>
+      <canvas id="price-chart" height="120"></canvas>
+      <p class="note">The chart uses sampled prices collected while tracking is running.</p>
+    </div>
+
     <script>
       const state = { events: [], selected: null };
 
@@ -265,7 +307,13 @@ def _render_homepage() -> str:
         ingestStatus: document.getElementById("ingest-status"),
         eventsTable: document.querySelector("#events-table tbody"),
         eventError: document.getElementById("event-error"),
+        startTracking: document.getElementById("start-tracking"),
+        stopTracking: document.getElementById("stop-tracking"),
+        chartCanvas: document.getElementById("price-chart"),
       };
+
+      let priceChart = null;
+      let trackingInterval = null;
 
       function renderHistory(events) {
         elements.eventsTable.innerHTML = "";
@@ -333,6 +381,65 @@ def _render_homepage() -> str:
         }
         const events = await response.json();
         renderHistory(events);
+        await loadPriceHistory();
+      }
+
+      async function loadPriceHistory() {
+        const eventId = elements.eventSelect.value;
+        if (!eventId) {
+          return;
+        }
+        const response = await fetch(`/events/price-history?event_id=${eventId}`);
+        if (!response.ok) {
+          return;
+        }
+        const points = await response.json();
+        const labels = points.map((point) => point.timestamp);
+        const data = points.map((point) => point.price);
+        renderChart(labels, data);
+      }
+
+      async function samplePrice() {
+        const eventId = elements.eventSelect.value;
+        if (!eventId) {
+          elements.eventError.textContent = "Select an event first.";
+          return;
+        }
+        await fetch(`/events/price-sample?event_id=${eventId}`, { method: "POST" });
+        await loadPriceHistory();
+      }
+
+      function renderChart(labels, data) {
+        if (!window.Chart) {
+          return;
+        }
+        if (priceChart) {
+          priceChart.destroy();
+        }
+        const ctx = elements.chartCanvas.getContext("2d");
+        priceChart = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Probability",
+                data,
+                borderColor: "#0969da",
+                backgroundColor: "rgba(9, 105, 218, 0.1)",
+                tension: 0.2,
+              },
+            ],
+          },
+          options: {
+            scales: {
+              y: {
+                min: 0,
+                max: 1,
+              },
+            },
+          },
+        });
       }
 
       async function loadTags() {
@@ -359,9 +466,23 @@ def _render_homepage() -> str:
       elements.tagSelect.addEventListener("change", () => {
         loadCryptoEvents();
       });
+      elements.startTracking.addEventListener("click", () => {
+        if (trackingInterval) {
+          return;
+        }
+        samplePrice();
+        trackingInterval = setInterval(samplePrice, 30000);
+      });
+      elements.stopTracking.addEventListener("click", () => {
+        if (trackingInterval) {
+          clearInterval(trackingInterval);
+          trackingInterval = null;
+        }
+      });
 
       loadTags();
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   </body>
 </html>
 """
@@ -381,6 +502,8 @@ app.routes.extend(
         Route("/options/events", list_events_by_tag, methods=["GET"]),
         Route("/options/tags", list_tags, methods=["GET"]),
         Route("/events/history", get_event_history, methods=["GET"]),
+        Route("/events/price-sample", sample_price, methods=["POST"]),
+        Route("/events/price-history", price_history, methods=["GET"]),
         Route("/events/{event_id}", get_event, methods=["GET"]),
         Route("/events/{event_id}/analytics", get_event_analytics, methods=["GET"]),
     ]
