@@ -97,9 +97,7 @@ async def list_events_by_tag(request: Request) -> JSONResponse:
     tag_id = request.query_params.get("tag_id")
     if not tag_id:
         raise HTTPException(status_code=400, detail="tag_id is required")
-    events = gamma_client.fetch_events(
-        params={"tag_id": tag_id, "active": "true", "closed": "true"}
-    )
+    events = gamma_client.fetch_events(params={"tag_id": tag_id})
     payload = [
         {
             "id": event.get("id") or event.get("event_id"),
@@ -120,9 +118,7 @@ async def get_event_history(request: Request) -> JSONResponse:
     if not days:
         raise HTTPException(status_code=400, detail="days must be numeric")
     cutoff = collector._cutoff_datetime(days)
-    events = gamma_client.fetch_events(
-        params={"tag_id": tag_id, "active": "true", "closed": "true"}
-    )
+    events = gamma_client.fetch_events(params={"tag_id": tag_id})
     result = []
     for event in events:
         candidate_id = event.get("id") or event.get("event_id")
@@ -343,7 +339,16 @@ def _render_homepage() -> str:
         }
         const response = await fetch(`/events/history?tag_id=${tagId}&event_id=${eventId}&days=${days}`);
         if (!response.ok) {
-          elements.eventError.textContent = "Failed to load history.";
+          let detail = "Failed to load history.";
+          try {
+            const payload = await response.json();
+            if (payload && payload.detail) {
+              detail = payload.detail;
+            }
+          } catch (error) {
+            // ignore parse errors
+          }
+          elements.eventError.textContent = detail;
           return;
         }
         const events = await response.json();
