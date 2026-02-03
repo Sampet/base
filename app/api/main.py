@@ -97,10 +97,12 @@ async def list_events_by_tag(request: Request) -> JSONResponse:
     tag_id = request.query_params.get("tag_id")
     if not tag_id:
         raise HTTPException(status_code=400, detail="tag_id is required")
-    events = gamma_client.fetch_events(params={"tag_id": tag_id})
+    events = gamma_client.fetch_events(
+        params={"tag_id": tag_id, "active": "true", "closed": "true"}
+    )
     payload = [
         {
-            "id": event.get("id"),
+            "id": event.get("id") or event.get("event_id"),
             "title": event.get("title") or event.get("question"),
         }
         for event in events
@@ -118,10 +120,13 @@ async def get_event_history(request: Request) -> JSONResponse:
     if not days:
         raise HTTPException(status_code=400, detail="days must be numeric")
     cutoff = collector._cutoff_datetime(days)
-    events = gamma_client.fetch_events(params={"tag_id": tag_id})
+    events = gamma_client.fetch_events(
+        params={"tag_id": tag_id, "active": "true", "closed": "true"}
+    )
     result = []
     for event in events:
-        if str(event.get("id")) != str(event_id):
+        candidate_id = event.get("id") or event.get("event_id")
+        if str(candidate_id) != str(event_id):
             continue
         start_time = collector._parse_datetime(event.get("startDate") or event.get("start_date"))
         end_time = collector._parse_datetime(event.get("endDate") or event.get("end_date"))
